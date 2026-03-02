@@ -130,6 +130,7 @@
 {"issue_id":"gt-tit8","label":"memory"}
 {"issue_id":"gt-tsut","label":"zfc-violation"}
 {"issue_id":"gt-utbjv","label":"worker-lifecycle"}
+{"issue_id":"gt-wisp-uf93r","label":"gt:merge-request"}
 {"issue_id":"gt-witness-role","label":"migrated-to:hq-witness-role"}
 {"issue_id":"gt-wrdz","label":"cleanup"}
 {"issue_id":"gt-xpgh8","label":"desire-path"}
