@@ -1052,7 +1052,7 @@ behavior:
 		maxConnLine,
 		readTimeoutLine,
 		writeTimeoutLine,
-		config.DataDir,
+		filepath.ToSlash(config.DataDir),
 	)
 
 	return os.WriteFile(configPath, []byte(content), 0600)
