@@ -29,6 +29,27 @@ after inspecting tmux pane output for signs of life.
 
 Reference: WAR-ROOM-SERIAL-KILLER.md, commit f3d47a96.
 
+## Scope — What You May and May NOT Touch
+
+**IN SCOPE** (these are the ONLY sessions this plugin may inspect or act on):
+- Polecat sessions (`<rig>-polecat-<name>`)
+- Deacon session (`hq-deacon`)
+
+**OUT OF SCOPE — NEVER touch these, under any circumstances:**
+- **Crew sessions** (`<rig>-crew-<name>`, e.g. `gastown-crew-bear`). Crew lifecycle
+  is managed by the overseer (human), not dogs. Crew members are persistent,
+  long-lived, and user-managed. A crew session that looks idle is NOT stuck — it
+  is waiting for its human. Killing a crew session destroys the overseer's active
+  workspace and is a **critical incident**.
+- **Mayor session** (`hq-mayor`)
+- **Witness sessions** (`<rig>-witness`)
+- **Refinery sessions** (`<rig>-refinery`)
+- Any session not explicitly enumerated by the bash scripts in Steps 1-3
+
+**This scope is absolute.** Do NOT extend it based on your own judgment. The bash
+scripts enumerate exactly the sessions you should check. If a session does not
+appear in `CRASHED[]` or `STUCK[]` arrays, it does not exist for your purposes.
+
 ## Step 1: Enumerate agents to check
 
 Gather all polecats and the deacon session. We check both crashed sessions
@@ -158,6 +179,11 @@ fi
 
 **This is the key difference from daemon blind-kill.** For each crashed or stuck
 agent, inspect the tmux pane context to determine if restart is appropriate.
+
+**SCOPE REMINDER: You may ONLY act on entries in the `CRASHED[]` and `STUCK[]`
+arrays populated by Steps 2-3. These arrays contain ONLY polecats and deacon.
+Do NOT inspect, evaluate, or act on ANY other sessions (crew, mayor, witness,
+refinery). If you find yourself considering a session not in these arrays, STOP.**
 
 **You (the dog agent) must evaluate each case:**
 
