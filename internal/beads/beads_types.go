@@ -35,15 +35,16 @@ var (
 // The town root is identified by the presence of mayor/town.json.
 // Returns empty string if not found (reached filesystem root).
 func FindTownRoot(startDir string) string {
+	var found string
 	dir := startDir
 	for {
 		townFile := filepath.Join(dir, "mayor", "town.json")
 		if _, err := os.Stat(townFile); err == nil {
-			return dir
+			found = dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			return "" // Reached filesystem root
+			return found
 		}
 		dir = parent
 	}
