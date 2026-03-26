@@ -957,6 +957,27 @@ func (e *Engineer) syncCrewWorkspaces() {
 	}
 }
 
+// syncBareRepoRefs fetches the latest refs from origin into the bare repo (.repo.git).
+// After the refinery pushes a merge to origin, the bare repo's remote tracking refs
+// (e.g. origin/main) may be stale — especially when the refinery operates from a
+// worktree that doesn't share .git with the bare repo (e.g. mayor/rig fallback),
+// or when crew members push directly. Polecats branch from origin/<branch> in the
+// bare repo, so stale refs cause them to start from outdated code.
+func (e *Engineer) syncBareRepoRefs() {
+	bareRepoPath := filepath.Join(e.rig.Path, ".repo.git")
+	if _, err := os.Stat(bareRepoPath); os.IsNotExist(err) {
+		// No bare repo — legacy architecture, nothing to sync
+		return
+	}
+
+	bareGit := git.NewGitWithDir(bareRepoPath, "")
+	if err := bareGit.Fetch("origin"); err != nil {
+		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to sync bare repo refs: %v\n", err)
+		return
+	}
+	_, _ = fmt.Fprintln(e.output, "[Engineer] ✓ Synced bare repo refs from origin")
+}
+
 // ProcessMRInfo processes a merge request from MRInfo.
 func (e *Engineer) ProcessMRInfo(ctx context.Context, mr *MRInfo) ProcessResult {
 	// MR fields are directly on the struct
@@ -1078,12 +1099,18 @@ func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) {
 		}
 	}
 
-	// 3. Check and auto-close completed convoys
+	// 3. Sync bare repo refs and crew workspaces so polecats branch from
+	// the latest code. Without this, the bare repo's origin/<branch> ref
+	// stays stale after merge, causing polecats to start from outdated code.
+	e.syncBareRepoRefs()
+	e.syncCrewWorkspaces()
+
+	// 4. Check and auto-close completed convoys
 	// After closing a source issue, its parent convoy may now be complete.
 	// Run convoy check to auto-close and notify subscribers.
 	e.postMergeConvoyCheck(mr)
 
-	// 4. Nudge mayor about successful merge so dispatcher can unblock
+	// 5. Nudge mayor about successful merge so dispatcher can unblock
 	// dependent work. Without this, mayor only discovers completion by polling.
 	// Uses nudge (not mail) to avoid permanent Dolt commits for routine signals (GH#2434).
 	nudgeMsg := fmt.Sprintf("MERGED: %s issue=%s branch=%s", mr.ID, mr.SourceIssue, mr.Branch)
@@ -1093,7 +1120,7 @@ func (e *Engineer) HandleMRInfoSuccess(mr *MRInfo, result ProcessResult) {
 		_, _ = fmt.Fprintf(e.output, "[Engineer] Warning: failed to nudge mayor about merge: %v\n", err)
 	}
 
-	// 5. Log success
+	// 6. Log success
 	_, _ = fmt.Fprintf(e.output, "[Engineer] ✓ Merged: %s (commit: %s)\n", mr.ID, result.MergeCommit)
 }
 

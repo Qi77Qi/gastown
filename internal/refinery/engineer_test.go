@@ -986,3 +986,59 @@ func TestIsClaimStale(t *testing.T) {
 		})
 	}
 }
+
+func TestSyncBareRepoRefs_NoBareRepo(t *testing.T) {
+	// syncBareRepoRefs should silently return when .repo.git doesn't exist
+	tmpDir, err := os.MkdirTemp("", "engineer-sync-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	rigDir := filepath.Join(tmpDir, "testrig")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &rig.Rig{
+		Name: "testrig",
+		Path: rigDir,
+	}
+
+	e := NewEngineer(r)
+	var buf bytes.Buffer
+	e.SetOutput(&buf)
+
+	// Should not panic and produce no output when bare repo doesn't exist
+	e.syncBareRepoRefs()
+
+	if buf.Len() != 0 {
+		t.Errorf("expected no output when bare repo missing, got: %s", buf.String())
+	}
+}
+
+func TestSyncCrewWorkspaces_NoCrew(t *testing.T) {
+	// syncCrewWorkspaces should silently return when no crew workers exist
+	tmpDir, err := os.MkdirTemp("", "engineer-crew-sync-test-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	rigDir := filepath.Join(tmpDir, "testrig")
+	if err := os.MkdirAll(rigDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	r := &rig.Rig{
+		Name: "testrig",
+		Path: rigDir,
+	}
+
+	e := NewEngineer(r)
+	var buf bytes.Buffer
+	e.SetOutput(&buf)
+
+	// Should not panic when no crew workers exist
+	e.syncCrewWorkspaces()
+}
