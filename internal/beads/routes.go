@@ -283,6 +283,37 @@ func GetRigNameForPrefix(townRoot, prefix string) string {
 	return ""
 }
 
+// WrapExternalRef wraps a bead ID as an external reference if its prefix maps
+// to a non-local rig via routes.jsonl. This is required for bd dep add, which
+// cannot resolve cross-rig bead IDs — it only operates on the current database.
+// Town-level beads (path=".") are returned as-is since they're in the same database.
+//
+// Example: WrapExternalRef("/town", "sc-0vu") → "external:science_cloud:sc-0vu"
+//          WrapExternalRef("/town", "hq-cv-abc") → "hq-cv-abc" (town-level, no wrapping)
+func WrapExternalRef(townRoot, beadID string) string {
+	prefix := ExtractPrefix(beadID)
+	if prefix == "" {
+		return beadID
+	}
+
+	beadsDir := filepath.Join(townRoot, ".beads")
+	routes, err := LoadRoutes(beadsDir)
+	if err != nil || routes == nil {
+		return beadID
+	}
+
+	for _, r := range routes {
+		if r.Prefix == prefix {
+			if r.Path == "." {
+				return beadID // Town-level — same database, no wrapping needed
+			}
+			return fmt.Sprintf("external:%s:%s", r.Path, beadID)
+		}
+	}
+
+	return beadID // Unknown prefix — pass through and let bd handle it
+}
+
 // ResolveBeadsDirForID resolves the correct .beads directory for a given bead ID
 // based on prefix routing. currentBeadsDir is the caller's default beads directory
 // (typically the town-level .beads). If the bead ID's prefix maps to a different

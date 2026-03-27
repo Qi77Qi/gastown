@@ -719,16 +719,14 @@ func runConvoyCreate(cmd *cobra.Command, args []string) error {
 
 	// Notify address is stored in description (line 166-168) and read from there
 
-	// Run dep add from town root so bd routes correctly across rigs via
-	// routes.jsonl. getTownBeadsDir() already returns the town root.
-	// StripBeadsDir prevents inherited BEADS_DIR from overriding routing.
-
-	// Add 'tracks' relations for each tracked issue
+	// Add 'tracks' relations for each tracked issue.
+	// Wrap cross-rig bead IDs as external references so bd dep add can store
+	// them without needing to resolve the target in the hq database.
 	trackedCount := 0
 	for _, issueID := range trackedIssues {
-		// Use --type=tracks for non-blocking tracking relation
+		depRef := beads.WrapExternalRef(townBeads, issueID)
 		var depStderr bytes.Buffer
-		if err := BdCmd("dep", "add", convoyID, issueID, "--type=tracks").
+		if err := BdCmd("dep", "add", convoyID, depRef, "--type=tracks").
 			WithAutoCommit().
 			Dir(townBeads).
 			StripBeadsDir().
@@ -839,14 +837,14 @@ func runConvoyAdd(cmd *cobra.Command, args []string) error {
 		fmt.Printf("%s Reopened convoy %s\n", style.Bold.Render("↺"), convoyID)
 	}
 
-	// Run dep add from town root so bd routes correctly across rigs via
-	// routes.jsonl. getTownBeadsDir() already returns the town root.
-
-	// Add 'tracks' relations for each issue
+	// Add 'tracks' relations for each issue.
+	// Wrap cross-rig bead IDs as external references so bd dep add can store
+	// them without needing to resolve the target in the hq database.
 	addedCount := 0
 	for _, issueID := range issuesToAdd {
+		depRef := beads.WrapExternalRef(townBeads, issueID)
 		var depStderr bytes.Buffer
-		if err := BdCmd("dep", "add", convoyID, issueID, "--type=tracks").
+		if err := BdCmd("dep", "add", convoyID, depRef, "--type=tracks").
 			Dir(townBeads).
 			WithAutoCommit().
 			StripBeadsDir().

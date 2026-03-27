@@ -212,6 +212,86 @@ esac
 	}
 }
 
+// TestConvoyAdd_CrossRigWrapsExternal verifies that `convoy add` wraps
+// cross-rig bead IDs as external references when calling `bd dep add`.
+// Without this wrapping, bd dep add fails with "no beads database found"
+// because the hq database doesn't contain the cross-rig issue. (gt-zxn)
+func TestConvoyAdd_CrossRigWrapsExternal(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on windows - shell stubs")
+	}
+
+	townRoot, expectedWD := makeRoutingTownWorkspace(t)
+	chdirConvoyTest(t, townRoot)
+
+	// Write routes.jsonl with a cross-rig prefix.
+	beadsDir := filepath.Join(townRoot, ".beads")
+	routesContent := `{"prefix":"hq-","path":"."}
+{"prefix":"hq-cv-","path":"."}
+{"prefix":"sc-","path":"science_cloud"}
+`
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
+		t.Fatalf("write routes.jsonl: %v", err)
+	}
+
+	// Track the arguments passed to bd dep add.
+	depArgsPath := filepath.Join(t.TempDir(), "dep-args.log")
+
+	scriptBody := fmt.Sprintf(`
+# Allow-stale version probe is exempt.
+if [ "$*" = "--allow-stale version" ]; then
+  exit 0
+fi
+
+case "$1" in
+  show)
+    # Return convoy details for validation
+    echo '[{"id":"hq-cv-test","title":"Test convoy","status":"open","issue_type":"convoy"}]'
+    ;;
+  dep)
+    # Log the full arguments
+    echo "$*" >> %s
+    ;;
+  *)
+    echo '[]'
+    ;;
+esac
+`, depArgsPath)
+	writeRoutingBdStub(t, scriptBody)
+
+	_ = expectedWD // used by writeRoutingBdStub indirectly via chdirConvoyTest
+
+	_, err := captureConvoyStdoutErr(t, func() error {
+		return runConvoyAdd(nil, []string{"hq-cv-test", "sc-0vu", "hq-abc"})
+	})
+	if err != nil {
+		t.Fatalf("runConvoyAdd: %v", err)
+	}
+
+	// Verify dep add was called with the correct arguments.
+	logData, err := os.ReadFile(depArgsPath)
+	if err != nil {
+		t.Fatalf("dep add was never called (no log file): %v", err)
+	}
+	lines := strings.Split(strings.TrimSpace(string(logData)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 dep add calls, got %d: %v", len(lines), lines)
+	}
+
+	// First call: sc-0vu should be wrapped as external:science_cloud:sc-0vu
+	if !strings.Contains(lines[0], "external:science_cloud:sc-0vu") {
+		t.Errorf("cross-rig bead not wrapped: got %q, want external:science_cloud:sc-0vu in args", lines[0])
+	}
+
+	// Second call: hq-abc is town-level, should NOT be wrapped
+	if strings.Contains(lines[1], "external:") {
+		t.Errorf("town-level bead should not be wrapped: got %q", lines[1])
+	}
+	if !strings.Contains(lines[1], "hq-abc") {
+		t.Errorf("town-level bead missing from args: got %q", lines[1])
+	}
+}
+
 // TestConvoyCreate_DepAddUsesTownRoot verifies that `dep add` during convoy
 // create runs from the town root (not its parent), so bd's prefix routing
 // can resolve cross-rig beads via routes.jsonl. This was the root cause of

@@ -335,6 +335,45 @@ func TestGetRigNameForPrefix(t *testing.T) {
 	}
 }
 
+func TestWrapExternalRef(t *testing.T) {
+	tmpDir := t.TempDir()
+	beadsDir := filepath.Join(tmpDir, ".beads")
+	if err := os.MkdirAll(beadsDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	routesContent := `{"prefix": "gt-", "path": "gastown/mayor/rig"}
+{"prefix": "sc-", "path": "science_cloud"}
+{"prefix": "hq-", "path": "."}
+{"prefix": "hq-cv-", "path": "."}
+`
+	if err := os.WriteFile(filepath.Join(beadsDir, "routes.jsonl"), []byte(routesContent), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name     string
+		beadID   string
+		expected string
+	}{
+		{"town-level hq bead not wrapped", "hq-abc", "hq-abc"},
+		{"town-level hq-cv bead not wrapped (prefix is hq-)", "hq-cv-abc", "hq-cv-abc"},
+		{"cross-rig sc bead wrapped", "sc-0vu", "external:science_cloud:sc-0vu"},
+		{"cross-rig gt bead wrapped", "gt-xyz", "external:gastown/mayor/rig:gt-xyz"},
+		{"unknown prefix passed through", "zz-unknown", "zz-unknown"},
+		{"empty ID passed through", "", ""},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := WrapExternalRef(tmpDir, tc.beadID)
+			if result != tc.expected {
+				t.Errorf("WrapExternalRef(%q, %q) = %q, want %q", tmpDir, tc.beadID, result, tc.expected)
+			}
+		})
+	}
+}
+
 func TestAgentBeadIDsWithPrefix(t *testing.T) {
 	tests := []struct {
 		name     string
