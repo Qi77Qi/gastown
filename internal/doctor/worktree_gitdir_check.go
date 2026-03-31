@@ -23,6 +23,17 @@ type WorktreeGitdirCheck struct {
 	FixableCheck
 	townRoot        string
 	brokenWorktrees []brokenWorktree
+	staleBackrefs   []staleBackref
+}
+
+// staleBackref represents a .repo.git/worktrees/*/gitdir file that points to
+// a non-existent path, even though the correct worktree directory exists under
+// the current town root.
+type staleBackref struct {
+	entryPath      string // e.g., /Users/qi/gt/cmux/.repo.git/worktrees/rig
+	gitdirContent  string // stale path from gitdir file
+	correctedPath  string // inferred correct path under current town root
+	rigPath        string // e.g., /Users/qi/gt/cmux
 }
 
 type brokenWorktree struct {
@@ -50,6 +61,7 @@ func NewWorktreeGitdirCheck() *WorktreeGitdirCheck {
 // Run scans all rigs and deacon dogs for worktrees with broken gitdir references.
 func (c *WorktreeGitdirCheck) Run(ctx *CheckContext) *CheckResult {
 	c.brokenWorktrees = nil
+	c.staleBackrefs = nil
 	c.townRoot = ctx.TownRoot
 
 	entries, err := os.ReadDir(ctx.TownRoot)
@@ -79,13 +91,15 @@ func (c *WorktreeGitdirCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 
 		c.checkRigWorktrees(rigPath, entry.Name())
+		c.checkBackrefs(rigPath)
 	}
 
 	// Scan deacon/dogs for cross-rig worktrees (not covered by rig scan
 	// because deacon/ doesn't have config.json or standard rig subdirs).
 	c.checkDeaconDogs(ctx.TownRoot)
 
-	if len(c.brokenWorktrees) == 0 {
+	totalBroken := len(c.brokenWorktrees) + len(c.staleBackrefs)
+	if totalBroken == 0 {
 		return &CheckResult{
 			Name:    c.Name(),
 			Status:  StatusOK,
@@ -101,11 +115,18 @@ func (c *WorktreeGitdirCheck) Run(ctx *CheckContext) *CheckResult {
 		}
 		details = append(details, fmt.Sprintf("%s: %s", relPath, bw.reason))
 	}
+	for _, sb := range c.staleBackrefs {
+		relPath, _ := filepath.Rel(ctx.TownRoot, sb.entryPath)
+		if relPath == "" {
+			relPath = sb.entryPath
+		}
+		details = append(details, fmt.Sprintf("%s/gitdir: stale back-reference → %s", relPath, sb.gitdirContent))
+	}
 
 	return &CheckResult{
 		Name:    c.Name(),
 		Status:  StatusError,
-		Message: fmt.Sprintf("%d worktree(s) with broken gitdir references", len(c.brokenWorktrees)),
+		Message: fmt.Sprintf("%d worktree reference(s) broken", totalBroken),
 		Details: details,
 		FixHint: "Run 'gt doctor --fix' to re-create broken worktrees from .repo.git",
 	}
@@ -332,6 +353,17 @@ func (c *WorktreeGitdirCheck) Fix(ctx *CheckContext) error {
 		}
 	}
 
+	// Fix stale back-references in .repo.git/worktrees/*/gitdir
+	for _, sb := range c.staleBackrefs {
+		if sb.correctedPath == "" {
+			continue
+		}
+
+		if err := c.fixStaleBackref(sb); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+
 	if len(errs) > 0 {
 		return fmt.Errorf("%s", strings.Join(errs, "; "))
 	}
@@ -433,6 +465,89 @@ func (c *WorktreeGitdirCheck) manualWorktreeRegister(worktreePath, repoPath, bra
 		return fmt.Errorf("%s: cannot write .git file: %w", worktreePath, err)
 	}
 
+	return nil
+}
+
+// checkBackrefs scans .repo.git/worktrees/*/gitdir files for stale back-references.
+// Each gitdir file should contain the absolute path to the worktree's .git file.
+// If that path doesn't exist, the back-reference is stale (e.g., after rsync/move).
+func (c *WorktreeGitdirCheck) checkBackrefs(rigPath string) {
+	worktreesDir := filepath.Join(rigPath, ".repo.git", "worktrees")
+	entries, err := os.ReadDir(worktreesDir)
+	if err != nil {
+		return // No worktrees directory — fine
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		gitdirFile := filepath.Join(worktreesDir, entry.Name(), "gitdir")
+		content, err := os.ReadFile(gitdirFile)
+		if err != nil {
+			continue
+		}
+
+		gitdirContent := strings.TrimSpace(string(content))
+		if gitdirContent == "" {
+			continue
+		}
+
+		// Check if the referenced .git file exists
+		if _, err := os.Stat(gitdirContent); err == nil {
+			continue // Path exists, back-reference is valid
+		}
+
+		// Stale back-reference. Try to infer the correct path by replacing
+		// the old town root prefix with the current one.
+		correctedPath := ""
+		if c.townRoot != "" {
+			correctedPath = c.inferCorrectedGitFilePath(gitdirContent, rigPath)
+		}
+
+		c.staleBackrefs = append(c.staleBackrefs, staleBackref{
+			entryPath:     filepath.Join(worktreesDir, entry.Name()),
+			gitdirContent: gitdirContent,
+			correctedPath: correctedPath,
+			rigPath:       rigPath,
+		})
+	}
+}
+
+// inferCorrectedGitFilePath tries to compute the correct .git file path by
+// replacing the old prefix in a stale path with the current town root.
+// For example: /Users/old/gt/cmux/refinery/rig/.git → /Users/qi/gt/cmux/refinery/rig/.git
+func (c *WorktreeGitdirCheck) inferCorrectedGitFilePath(stalePath, rigPath string) string {
+	// Extract the rig name from rigPath
+	rigName := filepath.Base(rigPath)
+
+	// Find the rig name in the stale path to determine what comes after it
+	// stalePath looks like: /old/prefix/<rigname>/some/subpath/.git
+	idx := strings.Index(stalePath, "/"+rigName+"/")
+	if idx < 0 {
+		return ""
+	}
+
+	// Build corrected path: <townRoot>/<rigname>/<suffix>
+	suffix := stalePath[idx+1+len(rigName):]
+	candidate := filepath.Join(c.townRoot, rigName) + suffix
+
+	// Verify the parent directory exists (the .git file itself may not exist yet)
+	parentDir := filepath.Dir(candidate)
+	if _, err := os.Stat(parentDir); err == nil {
+		return candidate
+	}
+
+	return ""
+}
+
+// fixStaleBackref rewrites a .repo.git/worktrees/*/gitdir file with the corrected path.
+func (c *WorktreeGitdirCheck) fixStaleBackref(sb staleBackref) error {
+	gitdirFile := filepath.Join(sb.entryPath, "gitdir")
+	if err := os.WriteFile(gitdirFile, []byte(sb.correctedPath+"\n"), 0644); err != nil {
+		return fmt.Errorf("%s: cannot write corrected gitdir: %w", sb.entryPath, err)
+	}
 	return nil
 }
 

@@ -95,8 +95,8 @@ func TestWorktreeGitdirCheck_BrokenGitdir_MissingBareRepo(t *testing.T) {
 	if result.Status != StatusError {
 		t.Errorf("expected StatusError for broken gitdir, got %v", result.Status)
 	}
-	if !strings.Contains(result.Message, "broken gitdir") {
-		t.Errorf("expected message about broken gitdir, got %q", result.Message)
+	if !strings.Contains(result.Message, "broken") {
+		t.Errorf("expected message about broken references, got %q", result.Message)
 	}
 	if len(result.Details) == 0 {
 		t.Error("expected details about the broken worktree")
@@ -415,6 +415,70 @@ func TestWorktreeGitdirCheck_DeaconDogs_MultipleDogs(t *testing.T) {
 	}
 	if !strings.Contains(result.Message, "3 worktree") {
 		t.Errorf("expected 3 broken worktrees, got %q", result.Message)
+	}
+}
+
+func TestWorktreeGitdirCheck_StaleBackref(t *testing.T) {
+	// Simulate a .repo.git/worktrees/rig/gitdir that points to a stale path.
+	tmpDir := t.TempDir()
+	rigName := "testrig"
+
+	// Create rig with .repo.git and a worktree entry
+	rigDir := filepath.Join(tmpDir, rigName)
+	wtEntry := filepath.Join(rigDir, ".repo.git", "worktrees", "rig")
+	if err := os.MkdirAll(wtEntry, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(rigDir, "config.json"), []byte(`{"repo":"test"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Create the actual worktree directory (refinery/rig) with a valid .git file
+	refineryRig := filepath.Join(rigDir, "refinery", "rig")
+	if err := os.MkdirAll(refineryRig, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(refineryRig, ".git"), []byte("gitdir: "+wtEntry+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Write a STALE gitdir back-reference (old path prefix)
+	staleGitdir := "/old/prefix/" + rigName + "/refinery/rig/.git"
+	if err := os.WriteFile(filepath.Join(wtEntry, "gitdir"), []byte(staleGitdir+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	check := NewWorktreeGitdirCheck()
+	ctx := &CheckContext{TownRoot: tmpDir}
+
+	result := check.Run(ctx)
+
+	if result.Status != StatusError {
+		t.Errorf("expected StatusError for stale back-reference, got %v", result.Status)
+	}
+	if len(result.Details) == 0 {
+		t.Fatal("expected details about stale back-reference")
+	}
+
+	found := false
+	for _, d := range result.Details {
+		if strings.Contains(d, "stale back-reference") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("expected 'stale back-reference' in details, got %v", result.Details)
+	}
+
+	// Verify the corrected path was inferred
+	if len(check.staleBackrefs) != 1 {
+		t.Fatalf("expected 1 stale backref, got %d", len(check.staleBackrefs))
+	}
+	sb := check.staleBackrefs[0]
+	expectedCorrected := filepath.Join(refineryRig, ".git")
+	if sb.correctedPath != expectedCorrected {
+		t.Errorf("expected correctedPath=%q, got %q", expectedCorrected, sb.correctedPath)
 	}
 }
 
